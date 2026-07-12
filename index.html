@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Celebrities — Add your names</title>
+  <style>
+    :root { --bg:#120a24; --surface:#1e1440; --surface2:#2a1c55; --border:#3a2a6b; --gold:#ffcf4d; --text:#f2edff; --dim:#a99fd0; --a:#4dd0e1; --b:#ff6ec7; --good:#5ad17a; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; padding:20px; max-width:520px; margin:0 auto; }
+    h1 { font-size:28px; margin:8px 0 2px; }
+    .dim { color:var(--dim); font-size:14px; }
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:16px; margin-top:16px; }
+    label { display:block; font-weight:700; margin:6px 0; }
+    input { width:100%; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:10px; padding:12px; font-size:16px; margin-bottom:8px; }
+    .teams { display:flex; gap:10px; }
+    .team { flex:1; text-align:center; padding:12px; border-radius:12px; border:2px solid var(--border); background:var(--surface2); font-weight:800; cursor:pointer; }
+    .team.sel-a { border-color:var(--a); color:var(--a); }
+    .team.sel-b { border-color:var(--b); color:var(--b); }
+    button.add { background:transparent; color:var(--dim); border:none; text-decoration:underline; font-size:14px; padding:4px; }
+    button.submit { width:100%; background:var(--gold); color:#231600; border:none; border-radius:14px; padding:16px; font-size:18px; font-weight:800; margin-top:16px; }
+    button.submit:disabled { opacity:.4; }
+    .big { color:var(--gold); font-size:24px; font-weight:900; }
+    .ok { text-align:center; padding:40px 0; }
+    .theme { color:var(--gold); font-weight:900; font-size:22px; text-align:center; margin-bottom:8px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <h1>🎭 Celebrities</h1>
+    <div class="dim">Add your celebrities. They go straight into the game — nobody sees who submitted what.</div>
+    <div id="form-wrap"></div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+    import { getFirestore, collection, addDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+    // ---- PASTE the SAME Firebase web config you put in the app (src/firebaseConfig.ts) ----
+    const firebaseConfig = {
+      apiKey: 'AIzaSyAbfglvUhYNKBSbJbrweFJbJ57H9sennFI',
+      authDomain: 'celebrities-8f17a.firebaseapp.com',
+      projectId: 'celebrities-8f17a',
+      storageBucket: 'celebrities-8f17a.firebasestorage.app',
+      messagingSenderId: '238175234466',
+      appId: '1:238175234466:web:6c9f00fba0ba42e1f8eafb',
+    };
+
+    const db = getFirestore(initializeApp(firebaseConfig));
+    const room = new URLSearchParams(location.search).get('room');
+    const wrap = document.getElementById('form-wrap');
+
+    if (!room) {
+      wrap.innerHTML = '<div class="card">No room code — scan the QR shown on the host’s screen.</div>';
+    } else {
+      let team = 0;
+      let rows = 5;
+      function render() {
+        let inputs = '';
+        for (let i = 0; i < rows; i++) inputs += `<input class="celeb" placeholder="Celebrity ${i+1}" autocapitalize="words" />`;
+        wrap.innerHTML = `
+          <div class="card">
+            <label>Your name</label>
+            <input id="name" placeholder="Your name" />
+            <label>Your team</label>
+            <div class="teams">
+              <div class="team ${team===0?'sel-a':''}" id="t0">Team 1</div>
+              <div class="team ${team===1?'sel-b':''}" id="t1">Team 2</div>
+            </div>
+          </div>
+          <div class="card">
+            <label>Your celebrities</label>
+            ${inputs}
+            <button class="add" id="more">+ add another</button>
+          </div>
+          <button class="submit" id="send">Submit</button>
+          <div class="dim" style="text-align:center;margin-top:8px">Room ${room}</div>`;
+        document.getElementById('t0').onclick = () => { team = 0; render(); };
+        document.getElementById('t1').onclick = () => { team = 1; render(); };
+        document.getElementById('more').onclick = () => { rows++; render(); };
+        document.getElementById('send').onclick = send;
+      }
+      async function send() {
+        const name = (document.getElementById('name').value || '').trim();
+        const celebrities = [...document.querySelectorAll('.celeb')].map(e => e.value.trim()).filter(Boolean);
+        if (!name || celebrities.length === 0) { alert('Enter your name and at least one celebrity.'); return; }
+        const btn = document.getElementById('send'); btn.disabled = true; btn.textContent = 'Sending…';
+        try {
+          await addDoc(collection(db, 'rooms', room, 'submissions'), { name, team, celebrities, at: serverTimestamp() });
+          wrap.innerHTML = '<div class="ok"><div class="big">✅ Sent!</div><div class="dim">Your names are in. You can close this page.</div></div>';
+        } catch (e) {
+          btn.disabled = false; btn.textContent = 'Submit';
+          alert('Could not send — check your internet and try again.');
+        }
+      }
+      render();
+    }
+  </script>
+</body>
+</html>
