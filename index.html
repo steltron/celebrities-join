@@ -41,6 +41,10 @@
     .thumb.has { border-color:var(--a); }
     summary { cursor:pointer; font-weight:800; color:var(--gold); font-size:15px; }
     details p { margin:6px 0; }
+    .zoomov { position:fixed; inset:0; background:rgba(0,0,0,.92); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; z-index:100; }
+    .zoomimg { max-width:100%; max-height:55vh; border-radius:12px; }
+    .zoomname { color:var(--text); font-size:26px; font-weight:900; text-align:center; }
+    .zoomov button { width:100%; max-width:340px; }
   </style>
 </head>
 <body>
@@ -185,6 +189,7 @@
     }
     // ---- Kid-Mode photo lookup (browser): mirrors the app's getCelebrityImage ----
     const imgCache = new Map();
+    const removedPhotos = new Set(); // names the guest removed a wrong photo for (sent to host as noPhoto)
     async function jget(url) { try { const r = await fetch(url); return await r.json(); } catch { return null; } }
     async function isHuman(qid) {
       const d = await jget(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${qid}&props=claims&format=json&origin=*`);
@@ -212,10 +217,26 @@
     }
     async function getCelebrityImage(name) {
       const key = name.trim().toLowerCase(); if (!key) return null;
+      if (removedPhotos.has(key)) return null; // guest removed this photo
       if (imgCache.has(key)) return imgCache.get(key);
       const img = (await imgFromWikipedia(name)) || (await imgFromDuckDuckGo(name)) || null;
       imgCache.set(key, img);
       return img;
+    }
+
+    // Full-screen photo zoom with a "remove wrong photo" option.
+    function openZoom(url, name, onRemove) {
+      const ov = document.createElement('div');
+      ov.className = 'zoomov';
+      ov.innerHTML =
+        '<img src="' + url + '" class="zoomimg" alt="" />' +
+        '<div class="zoomname">' + esc(name) + '</div>' +
+        '<div class="note" style="text-align:center">Not the right person? Remove it so Kid Mode shows the word instead.</div>' +
+        '<button class="submit" id="zoomrm" style="background:#ff6b6b;color:#2b0000">🗑 Remove photo</button>' +
+        '<button class="find alt" id="zoomclose">Close</button>';
+      document.body.appendChild(ov);
+      ov.querySelector('#zoomrm').onclick = () => { onRemove(); ov.remove(); };
+      ov.querySelector('#zoomclose').onclick = () => ov.remove();
     }
 
     function currentValues() { return [...document.querySelectorAll('.celeb')].map((e) => e.value.trim()).filter(Boolean); }
@@ -254,7 +275,6 @@
         <div class="card">
           <label>Your celebrities</label>
           <div id="celebs"></div>
-          <button class="add" id="more">+ add another</button>
           <div class="helper">
             <button class="link" id="descToggle">can't remember the name?</button>
             <button class="link" id="idea">need an idea?</button>
@@ -314,7 +334,11 @@
           note.innerHTML = advisory;
           if (childMode) {
             setThumb(img);
-            if (!img) {
+            if (img) {
+              thumb.style.cursor = 'pointer';
+              thumb.onclick = () => openZoom(img, text, () => { removedPhotos.add(text.toLowerCase()); setThumb(null); thumb.onclick = null; });
+            } else {
+              thumb.onclick = null;
               const n = document.createElement('div'); n.className = 'note';
               n.textContent = 'No photo — Kid Mode will skip this for young readers.';
               note.appendChild(n);
@@ -349,7 +373,6 @@
 
       document.getElementById('t0').onclick = () => { team = 0; document.getElementById('t0').classList.add('sel-a'); document.getElementById('t1').classList.remove('sel-b'); };
       document.getElementById('t1').onclick = () => { team = 1; document.getElementById('t1').classList.add('sel-b'); document.getElementById('t0').classList.remove('sel-a'); };
-      document.getElementById('more').onclick = () => { addRow().focus(); };
 
       // "need an idea?" — ask kid-friendly vs any, then fill from the chosen bank.
       const ideaBox = document.getElementById('ideaBox');
@@ -397,7 +420,8 @@
         if (junk) { alert(`"${junk}" looks like a typo (${nameWarning(junk)}). Fix it or re-enter before sending.`); return; }
         const btn = document.getElementById('send'); btn.disabled = true; btn.textContent = 'Sending…';
         try {
-          await addDoc(collection(db, 'rooms', room, 'submissions'), { name, team, celebrities, at: serverTimestamp() });
+          const noPhoto = celebrities.filter((n) => removedPhotos.has(n.trim().toLowerCase()));
+          await addDoc(collection(db, 'rooms', room, 'submissions'), { name, team, celebrities, noPhoto, at: serverTimestamp() });
           wrap.innerHTML =
             '<div class="ok"><div class="big">✅ Sent!</div>' +
             '<div class="dim" style="margin-bottom:20px">Your names are in.</div>' +
