@@ -62,7 +62,12 @@
       appId: '1:238175234466:web:6c9f00fba0ba42e1f8eafb',
     };
     const db = getFirestore(initializeApp(firebaseConfig));
-    const room = new URLSearchParams(location.search).get('room');
+    const params = new URLSearchParams(location.search);
+    const room = params.get('room');
+    const childMode = params.get('kid') === '1'; // host flags kid games → run photo search
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const teamAName = esc(params.get('a') || 'Team 1'); // real team names passed from the host's QR
+    const teamBName = esc(params.get('b') || 'Team 2');
     const wrap = document.getElementById('form-wrap');
 
     // ---------- Name helpers (ported from the app) ----------
@@ -231,8 +236,8 @@
           <input id="name" placeholder="Your name" />
           <label>Your team</label>
           <div class="teams">
-            <div class="team sel-a" id="t0">Team 1</div>
-            <div class="team" id="t1">Team 2</div>
+            <div class="team sel-a" id="t0">${teamAName}</div>
+            <div class="team" id="t1">${teamBName}</div>
           </div>
         </div>
         <div class="card">
@@ -279,24 +284,30 @@
           if (url) { thumb.textContent = ''; thumb.style.backgroundImage = `url("${url}")`; thumb.classList.add('has'); }
           else { thumb.style.backgroundImage = ''; thumb.classList.remove('has'); thumb.textContent = loading ? '…' : '📷'; }
         };
-        input.addEventListener('input', () => { note.innerHTML = ''; input.classList.remove('bad'); setThumb(null); });
+        input.addEventListener('input', () => { note.innerHTML = ''; input.classList.remove('bad'); if (childMode) setThumb(null); });
         input.addEventListener('blur', async () => {
-          note.innerHTML = ''; setThumb(null);
+          note.innerHTML = ''; if (childMode) setThumb(null);
           const text = input.value.trim();
           if (!text) { input.classList.remove('bad'); return; }
           const w = nameWarning(text);
           if (w && nameBlocks(text)) { input.classList.add('bad'); note.innerHTML = `<div class="warn">${w}</div>`; return; }
           input.classList.remove('bad');
           const advisory = w ? `<div class="warn">${w}</div>` : ''; // number flag — shown but not blocking
-          note.innerHTML = advisory + '<div class="note">checking…</div>'; setThumb(null, true);
-          const [corr, img] = await Promise.all([suggestSpelling(text), getCelebrityImage(text)]);
+          note.innerHTML = advisory + '<div class="note">checking…</div>'; if (childMode) setThumb(null, true);
+          // Only run the (network) photo lookup for child-mode games.
+          const [corr, img] = await Promise.all([
+            suggestSpelling(text),
+            childMode ? getCelebrityImage(text) : Promise.resolve(null),
+          ]);
           if (input.value.trim() !== text) return; // changed while we waited
           note.innerHTML = advisory;
-          setThumb(img);
-          if (!img) {
-            const n = document.createElement('div'); n.className = 'note';
-            n.textContent = 'No photo — Kid Mode will skip this for young readers.';
-            note.appendChild(n);
+          if (childMode) {
+            setThumb(img);
+            if (!img) {
+              const n = document.createElement('div'); n.className = 'note';
+              n.textContent = 'No photo — Kid Mode will skip this for young readers.';
+              note.appendChild(n);
+            }
           }
           if (corr.length) {
             const cr = document.createElement('div'); cr.className = 'chiprow';
@@ -309,7 +320,8 @@
             note.appendChild(cr);
           }
         });
-        fieldRow.appendChild(thumb); fieldRow.appendChild(input);
+        if (childMode) fieldRow.appendChild(thumb);
+        fieldRow.appendChild(input);
         row.appendChild(fieldRow); row.appendChild(note);
         celebs.appendChild(row);
         return input;
