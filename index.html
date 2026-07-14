@@ -32,8 +32,13 @@
     .descbox { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:10px; }
     .descrow { display:flex; gap:8px; align-items:flex-start; }
     .descrow input { margin-bottom:0; }
-    button.find { background:var(--a); color:#04232a; border:none; border-radius:10px; padding:0 18px; font-weight:800; cursor:pointer; font-size:15px; }
+    button.find { background:var(--a); color:#04232a; border:none; border-radius:10px; padding:10px 18px; font-weight:800; cursor:pointer; font-size:15px; }
     button.find:disabled { opacity:.5; }
+    button.find.alt { background:var(--surface2); color:var(--text); border:1px solid var(--border); }
+    .fieldrow { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+    .fieldrow input { margin-bottom:0; }
+    .thumb { width:40px; height:40px; flex:0 0 40px; border-radius:8px; background:var(--surface2); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:16px; color:var(--dim); background-size:cover; background-position:center; }
+    .thumb.has { border-color:var(--a); }
   </style>
 </head>
 <body>
@@ -84,6 +89,17 @@
       'Mickey Mouse','Batman','Spider-Man','Harry Potter','Darth Vader',
       'Homer Simpson','SpongeBob SquarePants','Superman','Yoda','Shrek',
       'Elsa','Wonder Woman','James Bond','Sherlock Holmes','Mario',
+    ];
+    // Kid-friendly names, all verified to resolve to a photo (Wikipedia-human or DuckDuckGo).
+    const KID_BANK = [
+      'Spider-Man','Batman','Superman','Wonder Woman','Iron Man','Captain America',
+      'Darth Vader','Yoda','Grogu','Optimus Prime',
+      'Buzz Lightyear','Mickey Mouse','Minnie Mouse','Donald Duck','Goofy','Pluto',
+      'Simba','Ariel','Cinderella','Snow White','Lightning McQueen','Baymax','Mike Wazowski',
+      'Pikachu','Mario','Sonic the Hedgehog','Shrek','Kung Fu Panda','Winnie the Pooh',
+      'Peppa Pig','Dora the Explorer','Scooby-Doo','Bugs Bunny',
+      'Kermit the Frog','Miss Piggy','Elmo','Cookie Monster',
+      'Hello Kitty','Barbie','Harry Potter',
     ];
     const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
     const titleCase = (s) => s.replace(/\S+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
@@ -157,6 +173,41 @@
       const seen = new Set();
       return titles.filter((t) => !bad.test(t) && !seen.has(norm(t)) && (seen.add(norm(t)), true)).slice(0, 4);
     }
+    // ---- Kid-Mode photo lookup (browser): mirrors the app's getCelebrityImage ----
+    const imgCache = new Map();
+    async function jget(url) { try { const r = await fetch(url); return await r.json(); } catch { return null; } }
+    async function isHuman(qid) {
+      const d = await jget(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${qid}&props=claims&format=json&origin=*`);
+      const claims = d?.entities?.[qid]?.claims?.P31 ?? [];
+      return claims.some((c) => c?.mainsnak?.datavalue?.value?.id === 'Q5');
+    }
+    async function imgFromWikipedia(name) {
+      const d = await jget('https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&prop=pageimages|pageprops&ppprop=wikibase_item&piprop=thumbnail&pithumbsize=300&generator=search&gsrlimit=8&gsrsearch=' + encodeURIComponent(name.trim()));
+      const pages = d?.query?.pages; if (!pages) return null;
+      const arr = Object.values(pages).sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      const lower = name.trim().toLowerCase();
+      const isLogo = (u) => /logo|\.svg/i.test(u);
+      const m = (t) => { const tl = String(t).toLowerCase(); return tl === lower || tl.startsWith(lower + ' ('); };
+      const pick = arr.find((p) => p?.thumbnail?.source && !isLogo(p.thumbnail.source) && m(p.title));
+      if (!pick) return null;
+      const qid = pick.pageprops?.wikibase_item;
+      if (!qid || !(await isHuman(qid))) return null;
+      return pick.thumbnail.source;
+    }
+    async function imgFromDuckDuckGo(name) {
+      const d = await jget('https://api.duckduckgo.com/?format=json&no_html=1&skip_disambig=1&t=celebrities&q=' + encodeURIComponent(name.trim()));
+      let img = d?.Image || ''; if (!img) return null;
+      if (img.startsWith('/')) img = 'https://duckduckgo.com' + img;
+      return img || null;
+    }
+    async function getCelebrityImage(name) {
+      const key = name.trim().toLowerCase(); if (!key) return null;
+      if (imgCache.has(key)) return imgCache.get(key);
+      const img = (await imgFromWikipedia(name)) || (await imgFromDuckDuckGo(name)) || null;
+      imgCache.set(key, img);
+      return img;
+    }
+
     function currentValues() { return [...document.querySelectorAll('.celeb')].map((e) => e.value.trim()).filter(Boolean); }
     function firstEmptyInput() { return [...document.querySelectorAll('.celeb')].find((e) => !e.value.trim()); }
     function fillName(text) {
@@ -197,45 +248,65 @@
             </div>
             <div id="descResults"></div>
           </div>
+          <div class="descbox" id="ideaBox" style="display:none">
+            <div class="note" style="margin-bottom:8px">What kind of name?</div>
+            <div class="descrow">
+              <button class="find" id="ideaKid">Kid-friendly 👶</button>
+              <button class="find alt" id="ideaAny">Any celebrity</button>
+            </div>
+          </div>
         </div>
         <button class="submit" id="send">Submit</button>
         <div class="dim" style="text-align:center;margin-top:8px">Room ${room}</div>`;
 
       const celebs = document.getElementById('celebs');
 
-      // Build one celebrity row: input + its own spell-check chip/warning area.
+      // Build one celebrity row: thumbnail + input + its own spell-check / photo-status area.
       function addRow(value = '') {
         const row = document.createElement('div');
+        const fieldRow = document.createElement('div'); fieldRow.className = 'fieldrow';
+        const thumb = document.createElement('div'); thumb.className = 'thumb'; thumb.textContent = '📷';
         const input = document.createElement('input');
         input.className = 'celeb';
         input.placeholder = 'Celebrity ' + (celebs.children.length + 1);
         input.setAttribute('autocapitalize', 'words');
         input.value = value;
-        const note = document.createElement('div'); // holds warning + "did you mean" chips
-        input.addEventListener('input', () => { note.innerHTML = ''; input.classList.remove('bad'); });
+        const note = document.createElement('div'); // warning / photo status / "did you mean" chips
+        const setThumb = (url, loading) => {
+          if (url) { thumb.textContent = ''; thumb.style.backgroundImage = `url("${url}")`; thumb.classList.add('has'); }
+          else { thumb.style.backgroundImage = ''; thumb.classList.remove('has'); thumb.textContent = loading ? '…' : '📷'; }
+        };
+        input.addEventListener('input', () => { note.innerHTML = ''; input.classList.remove('bad'); setThumb(null); });
         input.addEventListener('blur', async () => {
-          note.innerHTML = '';
+          note.innerHTML = ''; setThumb(null);
           const text = input.value.trim();
           if (!text) { input.classList.remove('bad'); return; }
           const w = nameWarning(text);
           if (w) { input.classList.add('bad'); note.innerHTML = `<div class="warn">${w}</div>`; return; }
           input.classList.remove('bad');
-          note.innerHTML = '<div class="note">checking spelling…</div>';
-          const corr = await suggestSpelling(text);
+          note.innerHTML = '<div class="note">checking…</div>'; setThumb(null, true);
+          const [corr, img] = await Promise.all([suggestSpelling(text), getCelebrityImage(text)]);
           if (input.value.trim() !== text) return; // changed while we waited
           note.innerHTML = '';
+          setThumb(img);
+          if (!img) {
+            const n = document.createElement('div'); n.className = 'note';
+            n.textContent = 'No photo — Kid Mode will skip this for young readers.';
+            note.appendChild(n);
+          }
           if (corr.length) {
             const cr = document.createElement('div'); cr.className = 'chiprow';
             cr.innerHTML = '<span class="note">Did you mean:</span>';
             corr.forEach((s) => {
               const c = document.createElement('button'); c.className = 'chip'; c.textContent = s;
-              c.onclick = () => { input.value = s; note.innerHTML = ''; };
+              c.onclick = () => { input.value = s; input.dispatchEvent(new Event('blur')); };
               cr.appendChild(c);
             });
             note.appendChild(cr);
           }
         });
-        row.appendChild(input); row.appendChild(note);
+        fieldRow.appendChild(thumb); fieldRow.appendChild(input);
+        row.appendChild(fieldRow); row.appendChild(note);
         celebs.appendChild(row);
         return input;
       }
@@ -245,12 +316,16 @@
       document.getElementById('t1').onclick = () => { team = 1; document.getElementById('t1').classList.add('sel-b'); document.getElementById('t0').classList.remove('sel-a'); };
       document.getElementById('more').onclick = () => { addRow().focus(); };
 
-      // "need an idea?" — drop a fresh bank name into the first empty slot.
-      document.getElementById('idea').onclick = () => {
+      // "need an idea?" — ask kid-friendly vs any, then fill from the chosen bank.
+      const ideaBox = document.getElementById('ideaBox');
+      document.getElementById('idea').onclick = () => { ideaBox.style.display = ideaBox.style.display === 'none' ? 'block' : 'none'; };
+      const fillFrom = (bank) => {
         const used = new Set(currentValues().map((n) => n.toLowerCase()));
-        const pool = CELEBRITY_BANK.filter((n) => !used.has(n.toLowerCase()));
+        const pool = bank.filter((n) => !used.has(n.toLowerCase()));
         if (pool.length) fillName(pool[Math.floor(Math.random() * pool.length)]);
       };
+      document.getElementById('ideaKid').onclick = () => fillFrom(KID_BANK);
+      document.getElementById('ideaAny').onclick = () => fillFrom(CELEBRITY_BANK);
 
       // "can't remember the name?" — describe → candidate chips.
       const descBox = document.getElementById('descBox');
