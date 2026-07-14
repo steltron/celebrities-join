@@ -39,6 +39,8 @@
     .fieldrow input { margin-bottom:0; }
     .thumb { width:40px; height:40px; flex:0 0 40px; border-radius:8px; background:var(--surface2); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:16px; color:var(--dim); background-size:cover; background-position:center; }
     .thumb.has { border-color:var(--a); }
+    summary { cursor:pointer; font-weight:800; color:var(--gold); font-size:15px; }
+    details p { margin:6px 0; }
   </style>
 </head>
 <body>
@@ -218,19 +220,28 @@
 
     function currentValues() { return [...document.querySelectorAll('.celeb')].map((e) => e.value.trim()).filter(Boolean); }
     function firstEmptyInput() { return [...document.querySelectorAll('.celeb')].find((e) => !e.value.trim()); }
-    function fillName(text) {
-      let el = firstEmptyInput();
-      if (!el) { el = addRow(); }
-      el.value = text;
-      el.dispatchEvent(new Event('blur'));
-    }
 
     // ---------- UI ----------
     if (!room) {
       wrap.innerHTML = '<div class="card">No room code — scan the QR shown on the host’s screen.</div>';
     } else {
+      buildForm();
+    }
+
+    function buildForm() {
       let team = 0;
       wrap.innerHTML = `
+        <details class="card">
+          <summary>ℹ️ How to play &amp; name tips</summary>
+          <div class="dim" style="margin-top:10px;line-height:1.5">
+            <p><b>Celebrities</b> — two teams, three rounds using the same bowl of names each round:
+            <b>R1</b> describe with any words · <b>R2</b> one word only · <b>R3</b> act it out.</p>
+            <p><b>Good names:</b> people or characters <i>everyone here</i> will recognize — actors,
+            musicians, athletes, cartoon characters, historical figures. Use full names
+            (e.g. "Sonic the Hedgehog", not "Sonic").</p>
+            <p><b>Avoid:</b> obscure or private people, inside jokes, or anyone the other team won't know.</p>
+          </div>
+        </details>
         <div class="card">
           <label>Your name</label>
           <input id="name" placeholder="Your name" />
@@ -328,6 +339,14 @@
       }
       for (let i = 0; i < 5; i++) addRow();
 
+      // Fill the first empty celebrity slot (or add a row). Defined here so it can see addRow.
+      function fillName(text) {
+        let el = firstEmptyInput();
+        if (!el) el = addRow();
+        el.value = text;
+        el.dispatchEvent(new Event('blur'));
+      }
+
       document.getElementById('t0').onclick = () => { team = 0; document.getElementById('t0').classList.add('sel-a'); document.getElementById('t1').classList.remove('sel-b'); };
       document.getElementById('t1').onclick = () => { team = 1; document.getElementById('t1').classList.add('sel-b'); document.getElementById('t0').classList.remove('sel-a'); };
       document.getElementById('more').onclick = () => { addRow().focus(); };
@@ -379,7 +398,12 @@
         const btn = document.getElementById('send'); btn.disabled = true; btn.textContent = 'Sending…';
         try {
           await addDoc(collection(db, 'rooms', room, 'submissions'), { name, team, celebrities, at: serverTimestamp() });
-          wrap.innerHTML = '<div class="ok"><div class="big">✅ Sent!</div><div class="dim">Your names are in. You can close this page.</div></div>';
+          wrap.innerHTML =
+            '<div class="ok"><div class="big">✅ Sent!</div>' +
+            '<div class="dim" style="margin-bottom:20px">Your names are in.</div>' +
+            '<button class="submit" id="again">➕ Add another player</button>' +
+            '<div class="dim" style="margin-top:10px">…or just close this page.</div></div>';
+          document.getElementById('again').onclick = () => buildForm(); // same room — no rescan needed
         } catch (e) {
           btn.disabled = false; btn.textContent = 'Submit';
           alert('Could not send — check your internet and try again.');
